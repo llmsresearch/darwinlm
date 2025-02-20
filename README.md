@@ -112,11 +112,11 @@ Some areas we'd love help with:
 ## Citation
 
 ```bibtex
-@article{darwinlm2024,
+@article{tang2025darwinlm,
   title={DarwinLM: Evolutionary Structured Pruning of Large Language Models},
-  author={Paper Authors},
-  journal={arXiv preprint},
-  year={2024}
+  author={Tang, Shengkun and Sieberling, Oliver and Kurtic, Eldar and Shen, Zhiqiang and Alistarh, Dan},
+  journal={arXiv preprint arXiv:2502.07780},
+  year={2025}
 }
 ```
 
