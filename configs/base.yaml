@@ -1,0 +1,60 @@
+defaults:
+  - model: llama2_7b  # Override with specific model config
+  - _self_
+
+# General configuration
+seed: 42
+output_dir: "outputs"
+log_level: "INFO"
+
+# Hardware configuration
+hardware:
+  device: "cuda"
+  dtype: "bfloat16"
+  num_workers: 4
+  gradient_checkpointing: true
+
+# Pruning configuration
+pruning:
+  sparsity_target: 0.5
+  num_levels: 10
+  granularity: 32
+  calibration_samples: 16
+  method: "second_order"
+  min_heads: 1  # Minimum heads to keep per layer
+
+# Evolution configuration
+evolution:
+  num_generations: 200
+  offspring_size: 16
+  selection_steps: 4
+  mutation:
+    type: "level_switch"
+    preserve_total: true
+  finetune:
+    tokens_per_step: [10000, 50000, 100000, 200000]
+    selection_tokens: [1024, 2048, 4096, 8192]
+
+# Training configuration
+training:
+  optimizer:
+    name: "adamw"
+    lr: 2e-5
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+  scheduler:
+    name: "linear_warmup"
+    warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  batch_size: 32
+  
+# Data configuration
+data:
+  train:
+    path: "path/to/fineweb_edu"
+    min_score: 0.9
+    max_length: 2048
+  eval:
+    num_samples: 1000
+    batch_size: 32 

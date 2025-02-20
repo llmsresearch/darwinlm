@@ -1,0 +1,24 @@
+# Core dependencies
+torch
+transformers
+accelerate
+bitsandbytes
+peft
+
+# Configuration and logging
+hydra-core
+omegaconf
+wandb
+pyyaml
+
+# Data processing and utilities
+numpy
+pandas
+tqdm
+scikit-learn
+
+# Development tools
+black
+isort
+pytest
+pytest-cov

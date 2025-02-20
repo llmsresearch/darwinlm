@@ -1,0 +1,9 @@
+model:
+  name: "qwen-14b"
+  pretrained_path: "Qwen/Qwen-14B"
+  architecture: "qwen"
+  attention:
+    pattern: "grouped"
+    has_gqa: true
+  quantization:
+    enabled: false 

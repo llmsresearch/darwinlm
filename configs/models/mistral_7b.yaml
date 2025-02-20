@@ -1,0 +1,9 @@
+model:
+  name: "mistral-7b"
+  pretrained_path: "mistralai/Mistral-7B-v0.1"
+  architecture: "mistral"
+  attention:
+    pattern: "grouped"
+    has_gqa: true
+  quantization:
+    enabled: false 

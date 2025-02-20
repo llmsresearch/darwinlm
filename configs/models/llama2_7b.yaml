@@ -1,0 +1,9 @@
+model:
+  name: "llama2-7b"
+  pretrained_path: "meta-llama/Llama-2-7b-hf"
+  architecture: "llama"
+  attention:
+    pattern: "standard"
+    has_gqa: false
+  quantization:
+    enabled: false 
