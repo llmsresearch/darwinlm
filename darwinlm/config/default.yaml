@@ -1,0 +1,55 @@
+# Model configuration
+model:
+  is_gqa: false  # Whether model uses Group Query Attention
+  mlp_granularity: 32  # Granularity for MLP pruning (multiple of 32 as per paper)
+  head_dim: 128  # Dimension per attention head
+
+# Hardware configuration
+hardware:
+  device: "cuda"  # Device to use (cuda/cpu)
+  num_gpus: 1  # Number of GPUs to use
+
+# Pruning configuration
+pruning:
+  num_levels: 10  # Number of sparsity levels
+  target_sparsity: 0.5  # Target sparsity ratio
+  calibration_size: 2048  # Number of samples for calibration
+
+# Evolution configuration
+evolution:
+  num_generations: 200  # Number of generations for search
+  offspring_size: 16  # Number of offspring per generation
+  selection_steps: 4  # Number of selection steps
+  finetune_tokens:  # Tokens for each selection step
+    - 10000
+    - 50000
+    - 100000
+    - 200000
+  selection_tokens:  # Tokens for fitness evaluation
+    - 1024
+    - 2048
+    - 4096
+    - 8192
+
+# Training configuration
+training:
+  learning_rate: 1.0e-5  # Learning rate for finetuning
+  warmup_steps: 50  # Number of warmup steps
+  weight_decay: 0.0  # Weight decay for optimizer
+  batch_size: 32  # Batch size for training
+  max_tokens: 10000000000  # Maximum tokens for post-training (10B)
+  max_grad_norm: 1.0  # Maximum gradient norm for clipping
+
+# Data configuration
+data:
+  train_path: "data/train"  # Path to training data
+  eval_path: "data/eval"  # Path to evaluation data
+  calibration_path: "data/calibration"  # Path to calibration data
+  max_seq_length: 4096  # Maximum sequence length
+
+# Output configuration
+output:
+  save_dir: "outputs"  # Directory to save outputs
+  log_dir: "logs"  # Directory to save logs
+  checkpoint_dir: "checkpoints"  # Directory to save checkpoints
+  save_frequency: 1000  # Save frequency in steps 

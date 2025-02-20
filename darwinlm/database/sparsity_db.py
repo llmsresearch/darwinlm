@@ -1,51 +1,72 @@
 import torch
-from typing import Dict, List, Tuple
+import numpy as np
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 @dataclass
 class SparsityLevel:
-    attention_heads: int
-    mlp_dims: int
-    layer_idx: int
-    pruned_weights: torch.Tensor
+    """Represents a sparsity level for a module"""
+    attention_heads: int  # Number of pruned heads
+    mlp_dims: int        # Number of pruned MLP dimensions
+    sparsity: float      # Actual sparsity achieved
 
 class SparsityDatabase:
-    """Database to store pruned layer weights at different sparsity levels"""
+    """Database of pre-computed sparsity levels following paper equations 5-6"""
     
-    def __init__(self, num_levels: int):
+    def __init__(self,
+                 num_levels: int,
+                 num_heads: int,
+                 intermediate_size: int,
+                 mlp_granularity: int = 32):
         self.num_levels = num_levels
-        self.db: Dict[int, List[SparsityLevel]] = {}
+        self.num_heads = num_heads
+        self.intermediate_size = intermediate_size
+        self.mlp_granularity = mlp_granularity
+        self.levels: Dict[int, SparsityLevel] = {}
         
-    def compute_level_sparsity(self, level: int, 
-                              num_heads: int, 
-                              intermediate_size: int,
-                              granularity: int = 32) -> Tuple[int, int]:
-        """Compute number of heads/dims to prune for a given level"""
-        num_pruned_heads = round(level * num_heads / self.num_levels)
-        num_pruned_dims = granularity * round(level * intermediate_size / 
-                                            (self.num_levels * granularity))
-        return num_pruned_heads, num_pruned_dims
+        # Generate sparsity levels
+        self._generate_levels()
         
-    def add_level(self, level: int, layer_idx: int, 
-                  pruned_weights: torch.Tensor,
-                  num_heads: int, num_dims: int):
-        """Add pruned weights for a sparsity level"""
-        if level not in self.db:
-            self.db[level] = []
+    def _generate_levels(self):
+        """Generate sparsity levels according to equations 5-6"""
+        for i in range(self.num_levels + 1):
+            # Equation 5: Number of pruned attention heads
+            pruned_heads = round(i * self.num_heads / self.num_levels)
             
-        self.db[level].append(
-            SparsityLevel(
-                attention_heads=num_heads,
-                mlp_dims=num_dims,
-                layer_idx=layer_idx,
-                pruned_weights=pruned_weights
+            # Equation 6: Number of pruned MLP dimensions
+            pruned_mlp = self.mlp_granularity * round(
+                i * self.intermediate_size / (self.num_levels * self.mlp_granularity)
             )
-        )
+            
+            # Calculate actual sparsity achieved
+            total_params = self.num_heads + self.intermediate_size
+            pruned_params = pruned_heads + pruned_mlp
+            sparsity = pruned_params / total_params
+            
+            self.levels[i] = SparsityLevel(
+                attention_heads=pruned_heads,
+                mlp_dims=pruned_mlp,
+                sparsity=sparsity
+            )
+    
+    def get_level(self, level: int) -> Optional[SparsityLevel]:
+        """Get sparsity configuration for a given level"""
+        return self.levels.get(level)
+    
+    def get_closest_level(self, target_sparsity: float) -> int:
+        """Find level that gives closest sparsity to target"""
+        min_diff = float('inf')
+        closest_level = 0
         
-    def get_level(self, level: int, layer_idx: int) -> SparsityLevel:
-        """Retrieve pruned weights for a specific level and layer"""
-        levels = self.db.get(level, [])
-        for l in levels:
-            if l.layer_idx == layer_idx:
-                return l
-        raise KeyError(f"No data found for level {level}, layer {layer_idx}") 
+        for level, config in self.levels.items():
+            diff = abs(config.sparsity - target_sparsity)
+            if diff < min_diff:
+                min_diff = diff
+                closest_level = level
+                
+        return closest_level
+    
+    def get_uniform_levels(self, target_sparsity: float, num_layers: int) -> List[int]:
+        """Get uniform level allocation for all layers"""
+        level = self.get_closest_level(target_sparsity)
+        return [level] * num_layers 

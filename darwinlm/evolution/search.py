@@ -1,31 +1,50 @@
 import torch
 import random
-from typing import List, Tuple
+import numpy as np
+from typing import List, Tuple, Optional
 from ..database.sparsity_db import SparsityDatabase
+from ..training.trainer import Trainer
+from ..utils.metrics import compute_kl_divergence
 
 class EvolutionarySearch:
     """Training-aware evolutionary search for optimal pruning structure"""
     
     def __init__(self, 
                  sparsity_db: SparsityDatabase,
-                 num_generations: int,
-                 offspring_size: int,
-                 selection_steps: int,
-                 finetune_tokens: List[int],
-                 selection_tokens: List[int]):
+                 trainer: Trainer,
+                 num_generations: int = 200,
+                 offspring_size: int = 16,
+                 selection_steps: int = 4,
+                 finetune_tokens: Optional[List[int]] = None,
+                 selection_tokens: Optional[List[int]] = None):
         self.db = sparsity_db
+        self.trainer = trainer
         self.num_generations = num_generations
         self.offspring_size = offspring_size
         self.selection_steps = selection_steps
-        self.finetune_tokens = finetune_tokens
-        self.selection_tokens = selection_tokens
+        
+        # Default token schedules from paper if not provided
+        self.finetune_tokens = finetune_tokens or [10_000, 50_000, 100_000, 200_000]
+        self.selection_tokens = selection_tokens or [1024, 2048, 4096, 8192]
         
     def level_switch_mutation(self, parent: List[int]) -> List[int]:
         """Mutation operator that switches sparsity levels while preserving total"""
         offspring = parent.copy()
         
+        # Randomly select modules (attention or MLP) to mutate
+        module_type = random.choice(['attention', 'mlp'])
+        
+        # Get indices of modules of selected type
+        if module_type == 'attention':
+            indices = [i for i, level in enumerate(parent) if i % 2 == 0]
+        else:
+            indices = [i for i, level in enumerate(parent) if i % 2 == 1]
+            
+        if len(indices) < 2:
+            return offspring
+            
         # Randomly select two different positions
-        pos1, pos2 = random.sample(range(len(parent)), 2)
+        pos1, pos2 = random.sample(indices, 2)
         
         # Increase level at pos1 and decrease at pos2 by same amount
         step = random.randint(1, min(self.db.num_levels - offspring[pos1], 
@@ -39,8 +58,11 @@ class EvolutionarySearch:
                         model: torch.nn.Module, 
                         eval_tokens: int) -> float:
         """Compute KL divergence between pruned and dense model outputs"""
-        # Implementation of fitness evaluation using KL divergence
-        pass
+        return compute_kl_divergence(
+            model,
+            self.trainer.get_dense_model(),
+            self.trainer.get_eval_batch(eval_tokens)
+        )
         
     def search(self, 
                initial_model: torch.nn.Module,
@@ -49,7 +71,7 @@ class EvolutionarySearch:
         
         # Initialize with uniform sparsity levels
         num_layers = len(list(initial_model.modules()))
-        parent = [int(target_sparsity * self.db.num_levels)] * num_layers
+        parent = self.db.get_uniform_levels(target_sparsity, num_layers)
         
         best_fitness = float('inf')
         best_levels = None
@@ -68,27 +90,36 @@ class EvolutionarySearch:
                 
                 # Finetune each candidate
                 for candidate in candidates:
-                    model = self.stitch_model(initial_model, candidate)
-                    model = self.finetune(model, self.finetune_tokens[step])
+                    model = self.trainer.stitch_model(initial_model, candidate)
+                    model = self.trainer.finetune(
+                        model, 
+                        num_tokens=self.finetune_tokens[step],
+                        batch_size=32  # As mentioned in paper
+                    )
                     candidate_models.append(model)
                 
-                # Select best candidates
-                fitnesses = [self.evaluate_fitness(model, self.selection_tokens[step])
-                           for model in candidate_models]
+                # Select best candidates based on KL divergence
+                fitnesses = [
+                    self.evaluate_fitness(model, self.selection_tokens[step])
+                    for model in candidate_models
+                ]
                 
+                # Sort by fitness (lower is better)
                 sorted_idx = torch.argsort(torch.tensor(fitnesses))
-                num_survive = len(candidates) // 2
                 
+                # Keep top half for next step
+                num_survive = max(1, len(candidates) // 2)
                 candidates = [candidates[i] for i in sorted_idx[:num_survive]]
+                candidate_models = [candidate_models[i] for i in sorted_idx[:num_survive]]
+                fitnesses = [fitnesses[i] for i in sorted_idx[:num_survive]]
                 
-            # Update parent
+            # Update parent with best candidate
             parent = candidates[0]
             
             # Track best solution
-            fitness = fitnesses[sorted_idx[0]]
-            if fitness < best_fitness:
-                best_fitness = fitness
+            if fitnesses[0] < best_fitness:
+                best_fitness = fitnesses[0]
                 best_levels = parent
-                best_model = candidate_models[sorted_idx[0]]
+                best_model = candidate_models[0]
                 
         return best_levels, best_model 

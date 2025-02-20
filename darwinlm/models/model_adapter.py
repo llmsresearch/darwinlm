@@ -1,7 +1,7 @@
 from typing import Dict, Any, Union, Optional
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM, AutoConfig
+from transformers import AutoModelForCausalLM, AutoConfig, PreTrainedModel
 from dataclasses import dataclass
 
 @dataclass
@@ -17,96 +17,100 @@ class ModelArchitectureConfig:
     num_key_value_heads: Optional[int] = None
 
 class ModelAdapter:
-    """Adapter class to handle different LLM architectures"""
+    """Handles model loading and adaptation"""
     
-    SUPPORTED_MODELS = {
-        "llama": {
-            "attention_pattern": "standard",
-            "has_gqa": False
-        },
-        "qwen": {
-            "attention_pattern": "grouped",
-            "has_gqa": True
-        },
-        "mistral": {
-            "attention_pattern": "grouped",
-            "has_gqa": True
-        },
-        "falcon": {
-            "attention_pattern": "standard",
-            "has_gqa": False
-        },
-        "mpt": {
-            "attention_pattern": "standard",
-            "has_gqa": False
-        }
-    }
-    
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self,
+                 model_name_or_path: str,
+                 config: Dict[str, Any]):
+        self.model_name = model_name_or_path
         self.config = config
-        self.model_name = config["model"]["name"].lower()
-        self.model = None
-        self.model_config = None
-        self._validate_model_type()
         
-    def _validate_model_type(self):
-        """Validate if model type is supported"""
-        model_family = next(
-            (k for k in self.SUPPORTED_MODELS.keys() if k in self.model_name), 
-            None
-        )
-        if not model_family:
-            raise ValueError(
-                f"Unsupported model type: {self.model_name}. "
-                f"Supported models: {list(self.SUPPORTED_MODELS.keys())}"
-            )
-        self.model_family = model_family
+        # Detect if model uses GQA
+        self.is_gqa = self._detect_gqa()
+        self.config["model"]["is_gqa"] = self.is_gqa
         
-    def load_model(self) -> nn.Module:
-        """Load pretrained model with appropriate configuration"""
-        self.model_config = AutoConfig.from_pretrained(
-            self.config["model"]["pretrained_path"]
-        )
+    def _detect_gqa(self) -> bool:
+        """Detect if model uses Group Query Attention"""
+        model_config = AutoConfig.from_pretrained(self.model_name)
         
-        # Handle model-specific loading configurations
-        load_kwargs = {
-            "config": self.model_config,
-            "torch_dtype": getattr(torch, self.config["model"]["dtype"]),
-            "device_map": self.config["model"]["device"]
-        }
-        
-        # Add model-specific loading args
-        if self.model_family in ["llama", "mistral"]:
-            load_kwargs["use_flash_attention_2"] = True
-        elif self.model_family == "qwen":
-            load_kwargs["use_flash_attention"] = True
+        # Check for GQA indicators in different model types
+        if hasattr(model_config, "num_key_value_heads"):
+            return model_config.num_key_value_heads != model_config.num_attention_heads
+        elif hasattr(model_config, "num_kv_heads"):
+            return model_config.num_kv_heads != model_config.num_attention_heads
             
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.config["model"]["pretrained_path"],
-            **load_kwargs
+        return False
+        
+    def load_model(self) -> PreTrainedModel:
+        """Load and prepare model
+        
+        Returns:
+            PreTrainedModel: Loaded model
+        """
+        # Load model
+        model = AutoModelForCausalLM.from_pretrained(
+            self.model_name,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map="auto" if torch.cuda.is_available() else None
         )
-        return self.model
+        
+        # Move to device if specified
+        if "device" in self.config["hardware"]:
+            device = torch.device(self.config["hardware"]["device"])
+            model = model.to(device)
+            
+        return model
+        
+    def save_model(self,
+                  model: PreTrainedModel,
+                  output_dir: str,
+                  save_name: Optional[str] = None):
+        """Save model checkpoint
+        
+        Args:
+            model: Model to save
+            output_dir: Output directory
+            save_name: Name for saved model (optional)
+        """
+        if save_name:
+            output_dir = f"{output_dir}/{save_name}"
+            
+        model.save_pretrained(output_dir)
+        
+    def get_model_config(self) -> Dict[str, Any]:
+        """Get model configuration
+        
+        Returns:
+            Dict[str, Any]: Model configuration
+        """
+        model_config = AutoConfig.from_pretrained(self.model_name)
+        
+        return {
+            "num_attention_heads": model_config.num_attention_heads,
+            "num_hidden_layers": model_config.num_hidden_layers,
+            "hidden_size": model_config.hidden_size,
+            "intermediate_size": model_config.intermediate_size,
+            "is_gqa": self.is_gqa
+        }
     
     def get_architecture_config(self) -> ModelArchitectureConfig:
         """Get complete model architecture configuration"""
-        config = self.model_config
+        config = AutoConfig.from_pretrained(self.model_name)
         
         base_config = {
             "num_attention_heads": config.num_attention_heads,
             "hidden_size": config.hidden_size,
             "intermediate_size": config.intermediate_size,
             "num_hidden_layers": config.num_hidden_layers,
-            "is_gqa": self.SUPPORTED_MODELS[self.model_family]["has_gqa"]
+            "is_gqa": self.is_gqa
         }
         
         # Handle different attention patterns
-        if self.SUPPORTED_MODELS[self.model_family]["attention_pattern"] == "grouped":
+        if hasattr(config, "num_key_value_heads"):
             base_config.update({
                 "head_dim": config.hidden_size // config.num_attention_heads,
-                "num_key_value_heads": getattr(config, "num_key_value_heads", 
-                                             config.num_attention_heads),
-                "attention_head_size": getattr(config, "attention_head_size", 
-                                             config.hidden_size // config.num_attention_heads)
+                "num_key_value_heads": config.num_key_value_heads,
+                "attention_head_size": config.hidden_size // config.num_attention_heads
             })
         else:
             base_config.update({
@@ -149,5 +153,5 @@ class ModelAdapter:
             "num_layers": arch_config.num_hidden_layers,
             "attention": self.get_attention_config(),
             "mlp": self.get_mlp_config(),
-            "attention_pattern": self.SUPPORTED_MODELS[self.model_family]["attention_pattern"]
+            "attention_pattern": "standard"  # Assuming standard attention pattern
         } 

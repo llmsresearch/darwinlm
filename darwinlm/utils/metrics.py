@@ -1,15 +1,104 @@
 import torch
 import torch.nn.functional as F
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from transformers import PreTrainedModel
 from torch.utils.data import DataLoader
 import numpy as np
 
-def compute_kl_divergence(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
-    """Compute KL divergence between two distributions"""
-    p = F.softmax(p, dim=-1)
-    q = F.softmax(q, dim=-1)
-    return torch.sum(p * (torch.log(p) - torch.log(q)), dim=-1).mean()
+def compute_kl_divergence(model1: torch.nn.Module,
+                         model2: torch.nn.Module,
+                         input_ids: torch.Tensor,
+                         attention_mask: Optional[torch.Tensor] = None,
+                         temperature: float = 1.0) -> torch.Tensor:
+    """Compute KL divergence between outputs of two models
+    
+    Args:
+        model1: First model
+        model2: Second model
+        input_ids: Input token IDs
+        attention_mask: Attention mask (optional)
+        temperature: Temperature for softmax
+        
+    Returns:
+        torch.Tensor: KL divergence value
+    """
+    # Ensure models are in eval mode
+    model1.eval()
+    model2.eval()
+    
+    with torch.no_grad():
+        # Forward pass through both models
+        outputs1 = model1(input_ids, attention_mask=attention_mask).logits
+        outputs2 = model2(input_ids, attention_mask=attention_mask).logits
+        
+        # Apply temperature scaling
+        if temperature != 1.0:
+            outputs1 = outputs1 / temperature
+            outputs2 = outputs2 / temperature
+            
+        # Compute probabilities
+        probs1 = F.softmax(outputs1, dim=-1)
+        probs2 = F.softmax(outputs2, dim=-1)
+        
+        # Compute KL divergence
+        kl_div = F.kl_div(
+            probs2.log(),
+            probs1,
+            reduction='batchmean',
+            log_target=False
+        )
+        
+    return kl_div
+
+def compute_perplexity(model: torch.nn.Module,
+                      input_ids: torch.Tensor,
+                      attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """Compute perplexity for a model
+    
+    Args:
+        model: Model to evaluate
+        input_ids: Input token IDs
+        attention_mask: Attention mask (optional)
+        
+    Returns:
+        torch.Tensor: Perplexity value
+    """
+    model.eval()
+    
+    with torch.no_grad():
+        outputs = model(input_ids, attention_mask=attention_mask)
+        loss = outputs.loss
+        
+    return torch.exp(loss)
+
+def compute_model_size(model: torch.nn.Module) -> int:
+    """Compute number of parameters in model
+    
+    Args:
+        model: Model to analyze
+        
+    Returns:
+        int: Number of parameters
+    """
+    return sum(p.numel() for p in model.parameters())
+
+def compute_sparsity(model: torch.nn.Module) -> float:
+    """Compute overall sparsity of model
+    
+    Args:
+        model: Model to analyze
+        
+    Returns:
+        float: Sparsity ratio (0-1)
+    """
+    total_params = 0
+    zero_params = 0
+    
+    for p in model.parameters():
+        total_params += p.numel()
+        zero_params += (p == 0).sum().item()
+        
+    return zero_params / total_params
 
 def compute_loss(outputs: Dict[str, torch.Tensor], 
                 labels: torch.Tensor) -> torch.Tensor:
