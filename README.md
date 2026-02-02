@@ -7,6 +7,9 @@
 
 This repository contains the unofficial implementation of [DarwinLM: Evolutionary Structured Pruning of Large Language Models](https://arxiv.org/abs/2502.07780).
 
+> This implementation is part of [LLMs Research](https://llmsresearch.substack.com), where I break down ~100 papers weekly and build the ones worth building.
+
+---
 ## Project Structure
 ```
 darwinlm/
